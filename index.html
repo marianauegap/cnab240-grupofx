@@ -1217,6 +1217,42 @@ async function gerarCNAB() {
   }
   if (problemas.length > 0) log(`⚠ ${problemas.length} aviso(s) de validação — verifique o relatório`, 'warn');
 
+  // ── VERIFICAÇÃO DE DUPLICATAS NA PRÓPRIA PLANILHA ────
+  const chavesVistas = {};
+  const dupsPlanilha = [];
+  S.dados.forEach((row, i) => {
+    const nome = String(getCol(row,'NOME_FAVORECIDO','NOME')||'').trim().toUpperCase();
+    const valor = parseValor(getCol(row,'VALOR_PAGAMENTO','VALOR'));
+    if (!nome) return;
+    const chave = nome + '|' + valor;
+    if (chavesVistas[chave] !== undefined) {
+      const existente = dupsPlanilha.find(d => d.chave === chave);
+      if (!existente) {
+        dupsPlanilha.push({ chave, nome, valor: (valor/100).toLocaleString('pt-BR',{minimumFractionDigits:2}), linhas: [chavesVistas[chave] + 2, i + 2] });
+      } else {
+        existente.linhas.push(i + 2);
+      }
+    } else {
+      chavesVistas[chave] = i;
+    }
+  });
+
+  if (dupsPlanilha.length > 0) {
+    log(`⚠ ${dupsPlanilha.length} linha(s) com nome E valor duplicados na planilha!`, 'err');
+    const dupPanel = document.getElementById('dup-panel');
+    const dupList = document.getElementById('dup-list');
+    document.getElementById('dup-panel-sub').textContent =
+      `${dupsPlanilha.length} pessoa(s) com mesmo nome E valor aparecem mais de uma vez — corrija antes de continuar:`;
+    dupList.innerHTML = dupsPlanilha.map(d => `
+      <div class="dup-item">
+        <span class="dup-item-nome">⚠ ${d.nome}</span>
+        <span class="dup-item-when">R$ ${d.valor} · Linhas: ${d.linhas.join(', ')}<br><span style="color:var(--vermelho);font-size:.67rem">mesmo nome e valor duplicados</span></span>
+      </div>`).join('');
+    dupPanel.classList.add('show');
+    dupPanel.scrollIntoView({behavior:'smooth', block:'nearest'});
+    return;
+  }
+
   // ── VERIFICAÇÃO DE DUPLICATAS NO HISTÓRICO ─────────
   if (!_ignorarDuplicatas) {
     log('Verificando duplicatas no histórico...', 'info');
