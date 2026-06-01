@@ -1616,7 +1616,7 @@ async function exportarHistoricoExcel() {
 let _resumoLotes = [];
 
 function abrirModalConfirmacao() {
-  if (!S.cnab) { toast('⚠ Gere o arquivo primeiro'); return; }
+  if (!S.cnab) { toast('⚠ Arquivo já baixado ou não gerado — clique em "Nova remessa" para começar'); return; }
 
   // Montar resumo por lote
   const loteMap = {};
@@ -1680,6 +1680,19 @@ async function confirmarDownload() {
   document.body.removeChild(a); URL.revokeObjectURL(url);
   log(`✓ Download: ${nm} | por ${S.usuarioLogado}`, 'ok');
   toast('⬇ ' + nm);
+
+  // ✅ PROTEÇÃO ANTI-DUPLICIDADE: zera o CNAB e desabilita o botão de download
+  // após o primeiro download, impedindo que o mesmo arquivo seja baixado e
+  // enviado ao banco mais de uma vez, evitando pagamentos duplicados.
+  S.cnab = null;
+  const btnDownload = document.querySelector('[onclick="abrirModalConfirmacao()"]');
+  if (btnDownload) {
+    btnDownload.disabled = true;
+    btnDownload.textContent = '✓ Arquivo baixado';
+    btnDownload.style.opacity = '0.5';
+    btnDownload.style.cursor = 'not-allowed';
+  }
+  log('⚠ Botão de download bloqueado — use "Nova remessa" para gerar um novo arquivo', 'warn');
 }
 
 // Fechar modal clicando fora
