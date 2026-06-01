@@ -511,6 +511,27 @@ body{font-family:'Sora',sans-serif;background:var(--preto);color:var(--branco);m
 .hist-toolbar-info{font-size:.75rem;color:var(--branco3)}
 .hist-toolbar-info strong{color:var(--amarelo)}
 
+/* ─── ALERTA DUPLICATAS ───────────────────────── */
+.dup-panel{
+  background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.3);
+  border-radius:var(--r);padding:1rem 1.25rem;display:none;margin-top:.75rem;
+}
+.dup-panel.show{display:block}
+.dup-panel-title{
+  font-size:.85rem;font-weight:700;color:var(--amarelo);
+  margin-bottom:.6rem;display:flex;align-items:center;gap:.5rem;
+}
+.dup-panel-sub{font-size:.77rem;color:var(--branco3);margin-bottom:.75rem}
+.dup-list{display:flex;flex-direction:column;gap:.3rem;max-height:160px;overflow-y:auto}
+.dup-item{
+  display:flex;align-items:center;gap:.75rem;
+  background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.15);
+  border-radius:6px;padding:.4rem .75rem;font-size:.78rem;
+}
+.dup-item-nome{flex:1;color:var(--branco2);font-weight:500}
+.dup-item-when{font-size:.7rem;color:var(--branco3);text-align:right}
+.dup-actions{display:flex;gap:.6rem;margin-top:.85rem}
+
 /* ─── VALIDAÇÃO / RELATÓRIO ERROS ─────────────── */
 .val-panel{
   background:var(--preto4);border:1px solid var(--borda);
@@ -776,6 +797,17 @@ body{font-family:'Sora',sans-serif;background:var(--preto);color:var(--branco);m
           <span class="val-badge" id="val-badge">—</span>
         </div>
         <div class="val-list" id="val-list"></div>
+      </div>
+
+      <!-- ALERTA DUPLICATAS -->
+      <div class="dup-panel" id="dup-panel">
+        <div class="dup-panel-title">⚠️ Atenção — Possíveis pagamentos duplicados</div>
+        <div class="dup-panel-sub" id="dup-panel-sub">As pessoas abaixo já foram pagas em remessas anteriores:</div>
+        <div class="dup-list" id="dup-list"></div>
+        <div class="dup-actions">
+          <button class="btn btn-ghost" style="font-size:.8rem" onclick="ignorarDuplicatas()">Ignorar e continuar mesmo assim</button>
+          <button class="btn btn-primary" style="font-size:.8rem" onclick="document.getElementById('dup-panel').classList.remove('show')">Cancelar e corrigir planilha</button>
+        </div>
       </div>
 
       <div class="btn-row">
@@ -1112,7 +1144,49 @@ const BANCOS_INFO = {
   '033':{ ispb:'90400888' }, '077':{ ispb:'00416968' },
 };
 
-function gerarCNAB() {
+// ═══════════════════════════════════════════════════
+//  VERIFICAÇÃO DE DUPLICATAS NO HISTÓRICO
+// ═══════════════════════════════════════════════════
+let _ignorarDuplicatas = false;
+
+function ignorarDuplicatas() {
+  _ignorarDuplicatas = true;
+  document.getElementById('dup-panel').classList.remove('show');
+  log('⚠ Duplicatas ignoradas pelo usuário — gerando mesmo assim', 'warn');
+  gerarCNAB();
+}
+
+async function verificarDuplicatas() {
+  const hist = await carregarHistorico();
+  if (!hist.length) return [];
+
+  // Montar set de todos os nomes já pagos nos últimos 30 dias
+  const jaPagesList = [];
+  hist.forEach(h => {
+    if (!h.nomesPagos || !Array.isArray(h.nomesPagos)) return;
+    h.nomesPagos.forEach(nome => {
+      jaPagesList.push({ nome, arquivo: h.arquivo, data: h.data, hora: h.hora });
+    });
+  });
+
+  // Nomes da planilha atual
+  const nomesPlanilha = S.dados.map(row =>
+    String(getCol(row,'NOME_FAVORECIDO','NOME')||'').trim().toUpperCase()
+  ).filter(Boolean);
+
+  // Cruzar
+  const duplicatas = [];
+  nomesPlanilha.forEach(nome => {
+    const achou = jaPagesList.find(j => j.nome === nome);
+    if (achou && !duplicatas.find(d => d.nome === nome)) {
+      duplicatas.push({ nome, arquivo: achou.arquivo, data: achou.data, hora: achou.hora });
+    }
+  });
+
+  return duplicatas;
+}
+
+async function gerarCNAB() {
   const errs = [];
   if (!S.dados.length) errs.push('Nenhuma planilha carregada');
   else {
@@ -1142,6 +1216,29 @@ function gerarCNAB() {
     return;
   }
   if (problemas.length > 0) log(`⚠ ${problemas.length} aviso(s) de validação — verifique o relatório`, 'warn');
+
+  // ── VERIFICAÇÃO DE DUPLICATAS NO HISTÓRICO ─────────
+  if (!_ignorarDuplicatas) {
+    log('Verificando duplicatas no histórico...', 'info');
+    const duplicatas = await verificarDuplicatas();
+    if (duplicatas.length > 0) {
+      log(`⚠ ${duplicatas.length} pessoa(s) já paga(s) em remessas anteriores!`, 'warn');
+      const dupPanel = document.getElementById('dup-panel');
+      const dupList = document.getElementById('dup-list');
+      document.getElementById('dup-panel-sub').textContent =
+        `${duplicatas.length} pessoa(s) abaixo já foram pagas em remessas anteriores — verifique antes de continuar:`;
+      dupList.innerHTML = duplicatas.map(d => `
+        <div class="dup-item">
+          <span class="dup-item-nome">⚠ ${d.nome}</span>
+          <span class="dup-item-when">Pago em ${d.data} ${d.hora}<br><span style="color:var(--amarelo);font-size:.67rem">${d.arquivo}</span></span>
+        </div>`).join('');
+      dupPanel.classList.add('show');
+      dupPanel.scrollIntoView({behavior:'smooth', block:'nearest'});
+      return;
+    }
+    log('✓ Nenhuma duplicata encontrada no histórico', 'ok');
+  }
+  _ignorarDuplicatas = false; // reset para próxima geração
 
   // Agrupar por banco
   const loteMap={};
@@ -1660,6 +1757,8 @@ async function confirmarDownload() {
   const nm = 'grupofx_inter077_cnab240_'+dt+'.rem';
   const resumoBancos = _resumoLotes.map(([cod,info])=>`${NOMES_BANCOS[cod]||cod}(${info.qtd})`).join(', ');
   const valTotal = _resumoLotes.reduce((s,[,v])=>s+v.valor,0);
+  // Salvar também a lista de nomes para verificação futura de duplicatas
+  const nomesPagos = S.dados.map(row => String(getCol(row,'NOME_FAVORECIDO','NOME')||'').trim().toUpperCase()).filter(Boolean);
   await salvarHistorico({
     arquivo: nm,
     data: d.toLocaleDateString('pt-BR'),
@@ -1670,6 +1769,7 @@ async function confirmarDownload() {
     resumoBancos,
     valor: 'R$ ' + (valTotal/100).toLocaleString('pt-BR',{minimumFractionDigits:2}),
     usuario: S.usuarioLogado,
+    nomesPagos,
   });
   // Efetuar download
   const blob = new Blob([S.cnab], {type:'text/plain;charset=latin1'});
